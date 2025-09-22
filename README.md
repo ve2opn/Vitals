@@ -1,6 +1,12 @@
 Vitals
 ====================================
 
+## Changes by VE2OPN
+![Chg](https://raw.githubusercontent.com/ve2opn/Vitals/main/screenshot.png)
+
+
+====================================
+
 Vitals is a GNOME Shell extension for displaying your computer's temperature, voltage, fan speed, memory usage, processor load, system resources, network speed and storage stats in your GNOME Shell's top menu bar. This is a one stop shop to monitor all of your vital sensors. Vitals uses asynchronous polling to provide a smooth user experience.
 
 ![How it works](https://raw.githubusercontent.com/corecoding/Vitals/main/howtouse.gif)

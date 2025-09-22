@@ -133,8 +133,8 @@
     </key>
     <key name="overlay-enabled" type="b">
       <default>true</default>
-      <summary>Enable top-right overlay</summary>
-      <description>Show/hide the semi-transparent top-right overlay of sensors.</description>
+      <summary>Enable overlay</summary>
+      <description>Show/hide the semi-transparent overlay.</description>
     </key>
   </schema>
 </schemalist>
