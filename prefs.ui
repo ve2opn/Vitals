@@ -283,6 +283,40 @@
                         </property>
                       </object>
                     </child>
+                    
+                    <child>
+                        <object class="GtkListBoxRow">
+                          <property name="width_request">100</property>
+                          <property name="hexpand">1</property>
+                          <property name="selectable">0</property>
+                          <property name="child">
+                            <object class="GtkBox">
+                              <property name="can_focus">0</property>
+                              <property name="margin_top">6</property>
+                              <property name="margin_bottom">6</property>
+                              <property name="margin_start">6</property>
+                              <property name="margin_end">6</property>
+                              <property name="spacing">12</property>
+                              <child>
+                                <object class="GtkLabel">
+                                  <property name="hexpand">1</property>
+                                  <property name="can_focus">0</property>
+                                  <property name="halign">start</property>
+                                  <property name="label" translatable="yes">Enable overlay</property>
+                                </object>
+                              </child>
+                              <child>
+                                <object class="GtkSwitch" id="overlay-enabled">
+                                  <property name="halign">end</property>
+                                </object>
+                              </child>
+                            </object>
+                          </property>
+                        </object>
+                    </child>                    
+                    
+                    
+                    
                     <child>
                       <object class="GtkListBoxRow">
                         <property name="width_request">100</property>
@@ -1131,6 +1165,7 @@
       </object>
     </child>
   </object>
+
   <object class="GtkBox" id="processor_prefs">
     <property name="can_focus">0</property>
     <property name="margin_top">12</property>
@@ -1180,4 +1215,5 @@
       </object>
     </child>
   </object>
+  
 </interface>

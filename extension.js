@@ -26,17 +26,15 @@ var VitalsMenuButton = GObject.registerClass({
 
         this._sensorIcons = {
             'temperature' : { 'icon': 'temperature-symbolic.svg' },
-                'voltage' : { 'icon': 'voltage-symbolic.svg' },
-                    'fan' : { 'icon': 'fan-symbolic.svg' },
-                 'memory' : { 'icon': 'memory-symbolic.svg' },
-              'processor' : { 'icon': 'cpu-symbolic.svg' },
-                 'system' : { 'icon': 'system-symbolic.svg' },
-                'network' : { 'icon': 'network-symbolic.svg',
-                           'icon-rx': 'network-download-symbolic.svg',
-                           'icon-tx': 'network-upload-symbolic.svg' },
-                'storage' : { 'icon': 'storage-symbolic.svg' },
-                'battery' : { 'icon': 'battery-symbolic.svg' }
-        }
+            'voltage' : { 'icon': 'voltage-symbolic.svg' },
+            'fan' : { 'icon': 'fan-symbolic.svg' },
+            'memory' : { 'icon': 'memory-symbolic.svg' },
+            'processor' : { 'icon': 'cpu-symbolic.svg' },
+            'system' : { 'icon': 'system-symbolic.svg' },
+            'network' : { 'icon': 'network-symbolic.svg', 'icon-rx': 'network-download-symbolic.svg', 'icon-tx': 'network-upload-symbolic.svg' },
+            'storage' : { 'icon': 'storage-symbolic.svg' },
+            'battery' : { 'icon': 'battery-symbolic.svg' }
+        };
 
         this._warnings = [];
         this._sensorMenuItems = {};
@@ -46,8 +44,16 @@ var VitalsMenuButton = GObject.registerClass({
         this._widths = {};
         this._last_query = new Date().getTime();
 
+        // overlay actors are separate so we don't reuse/destroy panel actors
+        this._overlayIcons = {};
+        this._overlayLabels = {};
+
+        // safe overlay setting (default true if key not present)
+        this._overlayEnabled = this._safeGetBool('overlay-enabled', true);
+
         this._sensors = new Sensors.Sensors(this._settings, this._sensorIcons);
         this._values = new Values.Values(this._settings, this._sensorIcons);
+
         this._menuLayout = new St.BoxLayout({
             vertical: false,
             clip_to_allocation: true,
@@ -58,31 +64,289 @@ var VitalsMenuButton = GObject.registerClass({
             pack_start: false
         });
 
+        // build panel hot area (from hot-sensors setting)
         this._drawMenu();
         this.add_actor(this._menuLayout);
+
         this._settingChangedSignals = [];
         this._refreshTimeoutId = null;
+        
+        // --- Overlay: container (top-left, vertical layout) ---
+        this._overlay = new St.BoxLayout({
+            style_class: 'vitals-overlay',
+            vertical: true, // Changed to vertical for two lines
+            clip_to_allocation: true,
+            x_align: Clutter.ActorAlign.START, // Left-aligned
+            y_align: Clutter.ActorAlign.START,
+            reactive: false,
+            x_expand: false,
+            y_expand: false
+        });
 
+        // First line: Clock container (horizontal)
+        this._clockLine = new St.BoxLayout({
+            style_class: 'vitals-overlay-clock-line',
+            vertical: false,
+            x_align: Clutter.ActorAlign.START,
+            y_align: Clutter.ActorAlign.CENTER
+        });
+
+        // Clock icon for overlay
+        //this._clockIcon = new St.Icon({
+        //    style_class: 'vitals-panel-icon-overlay vitals-clock-icon',
+        //    gicon: Gio.icon_new_for_string(Me.path + '/icons/clock-symbolic.svg'),
+        //    y_align: Clutter.ActorAlign.CENTER
+        //});
+
+        // Time display for overlay (larger font)
+        this._timeLabel = new St.Label({
+            style_class: 'vitals-overlay-label vitals-time-label vitals-clock-text',
+            text: this._getCurrentTime(),
+            y_expand: true,
+            y_align: Clutter.ActorAlign.CENTER
+        });
+        this._timeLabel.get_clutter_text().ellipsize = 0;
+
+        // Add clock icon and time to clock line
+        //this._clockLine.add_actor(this._clockIcon);
+        this._clockLine.add_actor(this._timeLabel);
+
+        // Second line: Sensors container (horizontal)
+        this._sensorsLine = new St.BoxLayout({
+            style_class: 'vitals-overlay-sensors-line',
+            vertical: false,
+            x_align: Clutter.ActorAlign.START,
+            y_align: Clutter.ActorAlign.CENTER
+        });
+
+        if (this._overlayEnabled) {
+            // ensure overlay has no parent before re-adding
+            try {
+                if (this._overlay.get_parent())
+                    this._overlay.get_parent().remove_actor(this._overlay);
+            } catch (e) {}
+
+            let added = false;
+
+            // prefer layoutManager.overlayGroup if available (some Shells expose it)
+            try {
+                if (Main.layoutManager && Main.layoutManager.overlayGroup && Main.layoutManager.overlayGroup.add_child) {
+                    Main.layoutManager.overlayGroup.add_child(this._overlay);
+                    added = true;
+                }
+            } catch (e) {}
+
+            // fallback to uiGroup
+            if (!added) {
+                try {
+                    Main.uiGroup.add_child(this._overlay);
+                    added = true;
+                } catch (e) {}
+            }
+
+            // ensure overlay is top-most among its parent's children
+            try {
+                let parent = this._overlay.get_parent();
+                if (parent && parent.set_child_above_sibling)
+                    parent.set_child_above_sibling(this._overlay, null);
+            } catch (e) {}
+
+            // Add clock line and sensors line to overlay
+            this._overlay.add_actor(this._clockLine);
+            this._overlay.add_actor(this._sensorsLine);
+        }
+        // --- end overlay container ---
+
+        // connect settings
         this._addSettingChangedSignal('update-time', this._updateTimeChanged.bind(this));
         this._addSettingChangedSignal('position-in-panel', this._positionInPanelChanged.bind(this));
-
-        let settings = [ 'use-higher-precision', 'alphabetize', 'hide-zeros', 'fixed-widths', 'hide-icons', 'unit', 'memory-measurement', 'include-public-ip', 'network-speed-format', 'storage-measurement', 'include-static-info' ];
+        // show/hide sensors signals will be connected after groups created (we connect below)
+        let settings = [ 'use-higher-precision', 'alphabetize', 'hide-zeros', 'overlay-enabled' ,'fixed-widths', 'hide-icons', 'unit', 'memory-measurement', 'include-public-ip', 'network-speed-format', 'storage-measurement', 'include-static-info' ];
         for (let setting of Object.values(settings))
             this._addSettingChangedSignal(setting, this._redrawMenu.bind(this));
 
-        // add signals for show- preference based categories
         for (let sensor in this._sensorIcons)
             this._addSettingChangedSignal('show-' + sensor, this._showHideSensorsChanged.bind(this));
 
+        // overlay toggle
+        this._addSettingChangedSignal('overlay-enabled', this._onOverlayEnabledChanged.bind(this));
+
+        // finalize menu and start queries/timer
         this._initializeMenu();
-
-        // start off with fresh sensors
         this._querySensors();
-
-        // start monitoring sensors
         this._initializeTimer();
     }
 
+    // Get current time in hh:mm AM/PM format
+    _getCurrentTime() {
+        let now = new Date();
+        let hours = now.getHours();
+        let minutes = now.getMinutes().toString().padStart(2, '0');
+        let ampm = hours >= 12 ? 'PM' : 'AM';
+        
+        // Convert to 12-hour format
+        hours = hours % 12;
+        hours = hours ? hours : 12; // 0 should be 12
+        
+        return hours.toString() + ':' + minutes + ' ' + ampm;
+    }
+
+    // Safe read for boolean setting (returns def if key missing)
+    _safeGetBool(key, def) {
+        try {
+            return this._settings.get_boolean(key);
+        } catch (e) {
+            return def;
+        }
+    }
+
+    // Handle overlay-enabled changes
+    _onOverlayEnabledChanged() {
+        this._overlayEnabled = this._safeGetBool('overlay-enabled', true);
+        if (this._overlayEnabled) {
+            if (!this._overlay.get_parent()) {
+                try {
+                    Main.layoutManager.addChrome(this._overlay, { trackFullscreen: true });
+                } catch (e) {
+                    Main.uiGroup.add_child(this._overlay);
+                }
+            }
+            
+            // Add clock line and sensors line if not already present
+            if (!this._clockLine.get_parent()) {
+                this._overlay.add_actor(this._clockLine);
+            }
+            if (!this._sensorsLine.get_parent()) {
+                this._overlay.add_actor(this._sensorsLine);
+            }
+            
+            this._refreshOverlay();
+        } else {
+            this._clearOverlay();
+            if (this._overlay.get_parent())
+                this._overlay.get_parent().remove_actor(this._overlay);
+        }
+    }
+
+    // Rebuild overlay to exactly match hot-sensors setting
+    _refreshOverlay() {
+        this._clearOverlay();
+        if (!this._overlayEnabled) return;
+
+        let hotSensors = this._settings.get_strv('hot-sensors') || [];
+        for (let k of hotSensors) {
+            let key = k;
+            // compatibility remap
+            if (key == '__max_network-download__') key = '__network-rx_max__';
+            if (key == '__max_network-upload__') key = '__network-tx_max__';
+            if (key === '_default_icon_') continue;
+            // initial label text if panel already has it, else placeholder
+            let text = (this._hotLabels[key]) ? this._hotLabels[key].get_text() : '\u2026';
+            this._createOverlayItem(key, text);
+        }
+    }
+
+    _clearOverlay() {
+        for (let k in this._overlayIcons) {
+            try { this._sensorsLine.remove_actor(this._overlayIcons[k]); } catch (e) {}
+            try { this._overlayIcons[k].destroy(); } catch (e) {}
+        }
+        for (let k in this._overlayLabels) {
+            try { this._sensorsLine.remove_actor(this._overlayLabels[k]); } catch (e) {}
+            try { this._overlayLabels[k].destroy(); } catch (e) {}
+        }
+        this._overlayIcons = {};
+        this._overlayLabels = {};
+    }
+
+    _createOverlayItem(key, text) {
+        if (!this._overlayEnabled) return;
+        if (!this._sensorsLine) return;
+        if (key === '_default_icon_') return;
+        if (key in this._overlayIcons) return;
+
+        // create fresh icon using existing logic (returns new St.Icon)
+        let icon = this._defaultIcon(key);
+        icon.add_style_class_name('vitals-panel-icon-overlay');
+        this._sensorsLine.add_actor(icon);
+        this._overlayIcons[key] = icon;
+
+        let label = new St.Label({
+            style_class: 'vitals-overlay-label',
+            text: (text !== undefined && text !== null) ? text : '\u2026',
+            y_expand: true,
+            y_align: Clutter.ActorAlign.CENTER
+        });
+        label.get_clutter_text().ellipsize = 0;
+        this._sensorsLine.add_actor(label);
+        this._overlayLabels[key] = label;
+    }
+
+    // Called when a sensor value updates; update overlay if key is currently hot
+    _updateOverlayForKey(key, value) {
+        if (!this._overlayEnabled) return;
+        if (!this._sensorsLine) return;
+
+        let hotSensors = this._settings.get_strv('hot-sensors') || [];
+        let normalized = hotSensors.map(k => {
+            if (k == '__max_network-download__') return '__network-rx_max__';
+            if (k == '__max_network-upload__') return '__network-tx_max__';
+            return k;
+        });
+
+        if (normalized.indexOf(key) === -1) return; // not hot -> skip
+
+        // create item if missing
+        if (!(key in this._overlayIcons))
+            this._createOverlayItem(key, value);
+
+        // update label
+        if (key in this._overlayLabels)
+            this._overlayLabels[key].set_text(value);
+    }
+
+    // Main updateDisplay (keeps original logic, plus overlay update)
+    _updateDisplay(label, value, type, key) {
+        // update sensor value in menubar
+        if (this._hotLabels[key]) {
+            this._hotLabels[key].set_text(value);
+
+            // support for fixed widths #55
+            if (this._settings.get_boolean('fixed-widths')) {
+                // grab text box width and see if new text is wider than old text
+                let width2 = this._hotLabels[key].get_clutter_text().width;
+                if (width2 > this._widths[key]) {
+                    this._hotLabels[key].set_width(width2);
+                    this._widths[key] = width2;
+                }
+            }
+        }
+
+        // update overlay (only for hot sensors)
+        this._updateOverlayForKey(key, value);
+
+        // have we added this sensor before?
+        let item = this._sensorMenuItems[key];
+        if (item) {
+            // update sensor value in the group
+            item.value = value;
+        } else if (type.includes('-group')) {
+            // update text next to group header
+            let group = type.split('-')[0];
+            if (this._groups[group]) {
+                this._groups[group].status.text = value;
+                this._sensorMenuItems[type] = this._groups[group];
+            }
+        } else {
+            // add item to group for the first time
+            let sensor = { 'label': label, 'value': value, 'type': type }
+            this._appendMenuItem(sensor, key);
+        }
+    }
+
+    // [Rest of the methods remain the same as previous version until _querySensors]
+    //======================================================================================================== 
+    
     _initializeMenu() {
         // display sensor categories
         for (let sensor in this._sensorIcons) {
@@ -228,6 +492,9 @@ var VitalsMenuButton = GObject.registerClass({
     }
 
     _createHotItem(key, value) {
+        // prevent duplicate hot icon in panel
+        if (this._hotIcons[key]) return;
+
         let icon = this._defaultIcon(key);
         this._hotIcons[key] = icon;
         this._menuLayout.add_actor(icon)
@@ -253,11 +520,20 @@ var VitalsMenuButton = GObject.registerClass({
 
         // support for fixed widths #55, save label (text) width
         this._widths[key] = label.width;
+
+        // create overlay mirror item if overlay enabled and this is a hot sensor
+        if (this._overlayEnabled && key != '_default_icon_')
+            this._createOverlayItem(key, label.get_text());
     }
 
     _showHideSensorsChanged(self, sensor) {
         this._sensors.resetHistory();
-        this._groups[sensor.substr(5)].visible = this._settings.get_boolean(sensor);
+        let groupKey = sensor.substr(5);
+        if (this._groups && this._groups[groupKey]) {
+            this._groups[groupKey].actor.visible = this._settings.get_boolean(sensor);
+        } else {
+            // ignore unknown group
+        }
     }
 
     _positionInPanelChanged() {
@@ -279,8 +555,16 @@ var VitalsMenuButton = GObject.registerClass({
         if (key in this._hotLabels) {
             let label = this._hotLabels[key];
             delete this._hotLabels[key];
-            // make sure set_label is not called on non existent actor
-            label.destroy();
+            // remove from layout safely
+            try { this._menuLayout.remove_actor(label); } catch(e) {}
+            try { label.destroy(); } catch(e) {}
+        }
+
+        // also remove overlay label if exists
+        if (key in this._overlayLabels) {
+            try { this._overlay.remove_actor(this._overlayLabels[key]); } catch(e) {}
+            try { this._overlayLabels[key].destroy(); } catch(e) {}
+            delete this._overlayLabels[key];
         }
     }
 
@@ -291,8 +575,16 @@ var VitalsMenuButton = GObject.registerClass({
 
     _removeHotIcon(key) {
         if (key in this._hotIcons) {
-            this._hotIcons[key].destroy();
+            try { this._menuLayout.remove_actor(this._hotIcons[key]); } catch(e) {}
+            try { this._hotIcons[key].destroy(); } catch(e) {}
             delete this._hotIcons[key];
+        }
+
+        // also remove overlay icon if exists
+        if (key in this._overlayIcons) {
+            try { this._overlay.remove_actor(this._overlayIcons[key]); } catch(e) {}
+            try { this._overlayIcons[key].destroy(); } catch(e) {}
+            delete this._overlayIcons[key];
         }
     }
 
@@ -315,6 +607,9 @@ var VitalsMenuButton = GObject.registerClass({
         this._sensors.resetHistory();
         this._values.resetHistory();
         this._querySensors();
+
+        // rebuild overlay
+        this._refreshOverlay();
     }
 
     _drawMenu() {
@@ -344,41 +639,6 @@ var VitalsMenuButton = GObject.registerClass({
 
     _addSettingChangedSignal(key, callback) {
         this._settingChangedSignals.push(this._settings.connect('changed::' + key, callback));
-    }
-
-    _updateDisplay(label, value, type, key) {
-        // update sensor value in menubar
-        if (this._hotLabels[key]) {
-            this._hotLabels[key].set_text(value);
-
-            // support for fixed widths #55
-            if (this._settings.get_boolean('fixed-widths')) {
-                // grab text box width and see if new text is wider than old text
-                let width2 = this._hotLabels[key].get_clutter_text().width;
-                if (width2 > this._widths[key]) {
-                    this._hotLabels[key].set_width(width2);
-                    this._widths[key] = width2;
-                }
-            }
-        }
-
-        // have we added this sensor before?
-        let item = this._sensorMenuItems[key];
-        if (item) {
-            // update sensor value in the group
-            item.value = value;
-        } else if (type.includes('-group')) {
-            // update text next to group header
-            let group = type.split('-')[0];
-            if (this._groups[group]) {
-                this._groups[group].status.text = value;
-                this._sensorMenuItems[type] = this._groups[group];
-            }
-        } else {
-            // add item to group for the first time
-            let sensor = { 'label': label, 'value': value, 'type': type }
-            this._appendMenuItem(sensor, key);
-        }
     }
 
     _appendMenuItem(sensor, key) {
@@ -504,7 +764,14 @@ var VitalsMenuButton = GObject.registerClass({
         return [alignment, gravity];
     }
 
+//========================================================================================================    
+
     _querySensors() {
+        // Update time display whenever sensors are queried
+        if (this._overlayEnabled && this._timeLabel) {
+            this._timeLabel.set_text(this._getCurrentTime());
+        }
+
         // figure out last run time
         let now = new Date().getTime();
         let dwell = (now - this._last_query) / 1000;
@@ -532,13 +799,13 @@ var VitalsMenuButton = GObject.registerClass({
         }
     }
 
-    _notify(msg, details, icon) {
+     _notify(msg, details, icon) {
         let source = new MessageTray.Source('MyApp Information', icon);
         Main.messageTray.add(source);
         let notification = new MessageTray.Notification(source, msg, details);
         notification.setTransient(true);
         source.notify(notification);
-    }
+    }                                
 
     destroy() {
         this._destroyTimer();
@@ -546,9 +813,30 @@ var VitalsMenuButton = GObject.registerClass({
         for (let signal of Object.values(this._settingChangedSignals))
             this._settings.disconnect(signal);
 
+        // clear overlay and remove container safely
+        try { this._clearOverlay(); } catch(e) {}
+        try { 
+            if (this._overlay && this._overlay.get_parent()) 
+                this._overlay.get_parent().remove_actor(this._overlay); 
+        } catch(e) {}
+        
+        // destroy clock line and sensors line
+        try { 
+            if (this._clockLine && this._clockLine.get_parent()) 
+                this._clockLine.get_parent().remove_actor(this._clockLine); 
+            this._clockLine.destroy(); 
+        } catch(e) {}
+        try { 
+            if (this._sensorsLine && this._sensorsLine.get_parent()) 
+                this._sensorsLine.get_parent().remove_actor(this._sensorsLine); 
+            this._sensorsLine.destroy(); 
+        } catch(e) {}
+
         super.destroy();
     }
 });
+
+// [Rest of the file remains the same]
 
 function init() {
     ExtensionUtils.initTranslations('vitals');
@@ -561,6 +849,8 @@ function enable() {
 }
 
 function disable() {
-    vitalsMenu.destroy();
-    vitalsMenu = null;
+    if (vitalsMenu) {
+        vitalsMenu.destroy();
+        vitalsMenu = null;
+    }
 }

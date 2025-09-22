@@ -14,3 +14,51 @@
 .vitals-button-action:hover, .vitals-button-action:focus { border-color: #777; }
 .vitals-button-action > StIcon { icon-size: 16px; }
 .vitals-button-box { padding: 0px; spacing: 22px; }
+
+/* Vitals Overlay: mirrors top-bar hot sensors */
+.vitals-overlay {
+    background-color: rgba(0, 0, 0, 0.4);  /* semi-transparent black */         
+    padding: 2px 6px;
+    border-radius: 6px;
+    color: #ffff5c;
+    margin-left: 90px;
+    margin-top: 2052px;  
+    z-index: 9999;
+}
+
+/* Icons inside overlay */
+.vitals-panel-icon-overlay {
+    icon-size: 30px;
+    color: #ffff5c;
+    margin-right: 3px;
+    vertical-align: middle;
+}
+
+/* Regular sensor text */
+.vitals-overlay-label {
+    color: #ffff5c;
+    font-size: 28px;
+    margin-right: 8px;
+    vertical-align: middle;
+}
+
+/* Larger clock text */
+.vitals-clock-text {
+    font-size: 42px;
+    margin-left: 14px;
+    color: #5cff5c;
+}
+
+.vitals-clock-icon {
+    margin-right: 4px;
+    icon-size: 44px;
+    color: white;
+}
+
+.vitals-overlay-clock-line {
+    spacing: 6px;
+}
+
+.vitals-overlay-sensors-line {
+    spacing: 4px;
+}

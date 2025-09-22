@@ -131,5 +131,10 @@
       <summary>Include processor static information</summary>
       <description>Display processor static information that doesn't change</description>
     </key>
+    <key name="overlay-enabled" type="b">
+      <default>true</default>
+      <summary>Enable top-right overlay</summary>
+      <description>Show/hide the semi-transparent top-right overlay of sensors.</description>
+    </key>
   </schema>
 </schemalist>
