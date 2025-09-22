@@ -2,8 +2,7 @@ Vitals
 ====================================
 
 ## Changes by VE2OPN
-![Chg](https://raw.githubusercontent.com/ve2opn/Vitals/main/screenshot.png)
-
+![Chg](https://raw.githubusercontent.com/ve2opn/Vitals/v61-ve2opn-overlay/screenshot.png)
 
 ====================================
 
